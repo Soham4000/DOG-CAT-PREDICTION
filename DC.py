@@ -1,13 +1,44 @@
 import streamlit as st
+import torch
+import torch.nn as nn
 import numpy as np
 from PIL import Image
-import tensorflow as tf
 
-st.title("Dog vs Cat Classifier") 
+st.title("Dog vs Cat Classifier")
+
+IMG_SIZE = 128
+
+
+class DogCatCNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 16, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(16, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+        )
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64), nn.ReLU(),
+            nn.Linear(64, 1), nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.pool(x)
+        return self.classifier(x)
+
 
 @st.cache_resource
 def load_model():
-    return tf.keras.models.load_model("dog_cat_model.keras")
+    model = DogCatCNN()
+    model.load_state_dict(torch.load("dog_cat_model.pt", map_location="cpu"))
+    model.eval()
+    return model
+
 
 model = load_model()
 
@@ -17,14 +48,16 @@ if uploaded_file is not None:
     img = Image.open(uploaded_file).convert("RGB")
     st.image(img, caption="Uploaded image", use_column_width=True)
 
-    img_resized = img.resize((200, 200))
-    img_array = np.array(img_resized)
-    test_input = img_array.reshape((1, 200, 200, 3)) / 255.0  # match your training preprocessing
+    img_resized = img.resize((IMG_SIZE, IMG_SIZE))
+    img_array = np.array(img_resized).astype(np.float32) / 255.0
+    tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0)  # HWC -> CHW, add batch dim
 
-    val = model.predict(test_input)
+    with torch.no_grad():
+        val = model(tensor).item()
 
-    # val is a probability array, e.g. [[0.87]] — not a plain 0/1, so compare against a threshold
-    if val[0][0] >= 0.5:
-        st.success("Prediction: Dog 🐶")
+    # class_to_idx from training: 0=cat, 1=dog — confirm this matches the printout
+    # from train_colab.py's "Classes:" line before trusting this label order
+    if val >= 0.5:
+        st.success(f"Prediction: Dog 🐶 (confidence {val:.2%})")
     else:
-        st.success("Prediction: Cat 🐱")
+        st.success(f"Prediction: Cat 🐱 (confidence {1-val:.2%})")
