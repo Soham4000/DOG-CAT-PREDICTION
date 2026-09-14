@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import torch
 import torch.nn as nn
@@ -7,6 +8,12 @@ from PIL import Image
 st.title("Dog vs Cat Classifier")
 
 IMG_SIZE = 128
+
+# Resolve the model path relative to this script's own location, not whatever
+# directory Streamlit happens to be running from — this is a common cause of
+# FileNotFoundError even when the file is correctly in the repo.
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(APP_DIR, "dog_cat_model.pt")
 
 
 class DogCatCNN(nn.Module):
@@ -34,8 +41,20 @@ class DogCatCNN(nn.Module):
 
 @st.cache_resource
 def load_model():
+    if not os.path.exists(MODEL_PATH):
+        # List what's actually in the app directory so the real problem is visible
+        # in the Streamlit UI instead of buried in the server logs.
+        available = os.listdir(APP_DIR)
+        st.error(
+            f"Model file not found at:\n`{MODEL_PATH}`\n\n"
+            f"Files actually present in the app directory:\n{available}\n\n"
+            "Check that dog_cat_model.pt is committed to the repo root, "
+            "not ignored by .gitignore, and under GitHub's file size limits."
+        )
+        st.stop()
+
     model = DogCatCNN()
-    model.load_state_dict(torch.load("dog_cat_model.pt", map_location="cpu"))
+    model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
     model.eval()
     return model
 
