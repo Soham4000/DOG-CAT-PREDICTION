@@ -1,44 +1,24 @@
-"""
-Run this in Colab. This is your exact architecture (16 -> 32 -> 32 conv blocks,
-Dense(512) -> Dense(1)) rewritten in PyTorch instead of Keras, with one change:
-Flatten() is replaced by GlobalAveragePooling. Your original Flatten+Dense(512)
-combo produces an 8.67M-parameter layer (~35MB) because 200x200 input with valid
-padding leaves a 23x23x32 feature map before the Dense layer. Global average
-pooling collapses that to 32 values first, keeping the same Dense(512)->Dense(1)
-head but cutting the model to well under 1MB.
-"""
-
 import os
-import zipfile
+import streamlit as st
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
+import numpy as np
+from PIL import Image
 
-# ---------- 1. Unzip dataset ----------
-if not os.path.exists('/content/DOGCAT'):
-    with zipfile.ZipFile('/content/DOGCAT.zip', 'r') as zip_ref:
-        zip_ref.extractall('/content')
+st.title("Dog vs Cat Classifier")
 
-# ---------- 2. Data loading ----------
-IMG_SIZE = 200  # matches your original target_size=(200,200)
+IMG_SIZE = 200
 
-train_transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),  # scales pixels to [0,1], same as your rescale=1/255
-])
+# Resolve the model path relative to this script's own location, not whatever
+# directory Streamlit happens to be running from — this is a common cause of
+# FileNotFoundError even when the file is correctly in the repo.
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(APP_DIR, "dog_cat_model.pt")
 
-train_dataset = datasets.ImageFolder('/content/DOGCAT/training', transform=train_transform)
-val_dataset = datasets.ImageFolder('/content/DOGCAT/validation', transform=train_transform)
 
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=2)
-val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=2)
-
-print("Classes:", train_dataset.class_to_idx)  # confirm 0=cat, 1=dog (alphabetical, matches your class_indices)
-
-# ---------- 3. Model — same conv stack as your Keras version, GAP instead of Flatten ----------
 class DogCatCNN(nn.Module):
+    """Must stay byte-for-byte identical to the architecture in train_colab.py,
+    or load_state_dict() will fail with a shape-mismatch error."""
     def __init__(self):
         super().__init__()
         self.features = nn.Sequential(
@@ -46,7 +26,7 @@ class DogCatCNN(nn.Module):
             nn.Conv2d(16, 32, 3), nn.ReLU(), nn.MaxPool2d(2, 2),
             nn.Conv2d(32, 32, 3), nn.ReLU(), nn.MaxPool2d(2, 2),
         )
-        self.pool = nn.AdaptiveAvgPool2d(1)  # replaces Flatten -> avoids the 8.67M-param blowup
+        self.pool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
             nn.Flatten(),
             nn.Linear(32, 512), nn.ReLU(),
@@ -59,52 +39,44 @@ class DogCatCNN(nn.Module):
         return self.classifier(x)
 
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = DogCatCNN().to(device)
+@st.cache_resource
+def load_model():
+    if not os.path.exists(MODEL_PATH):
+        # List what's actually in the app directory so the real problem is visible
+        # in the Streamlit UI instead of buried in the server logs.
+        available = os.listdir(APP_DIR)
+        st.error(
+            f"Model file not found at:\n`{MODEL_PATH}`\n\n"
+            f"Files actually present in the app directory:\n{available}\n\n"
+            "Check that dog_cat_model.pt is committed to the repo root, "
+            "not ignored by .gitignore, and under GitHub's file size limits."
+        )
+        st.stop()
 
-criterion = nn.BCELoss()
-optimizer = optim.Adam(model.parameters())  # matches your optimizer='adam'
-
-# ---------- 4. Train ----------
-EPOCHS = 10
-
-for epoch in range(EPOCHS):
-    model.train()
-    running_loss, correct, total = 0.0, 0, 0
-
-    for images, labels in train_loader:
-        images = images.to(device)
-        labels = labels.float().unsqueeze(1).to(device)
-
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-
-        running_loss += loss.item() * images.size(0)
-        predicted = (outputs >= 0.5).float()
-        correct += (predicted == labels).sum().item()
-        total += labels.size(0)
-
-    train_acc = correct / total
-
+    model = DogCatCNN()
+    model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
     model.eval()
-    val_correct, val_total = 0, 0
+    return model
+
+
+model = load_model()
+
+uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    img = Image.open(uploaded_file).convert("RGB")
+    st.image(img, caption="Uploaded image", use_container_width=True)
+
+    img_resized = img.resize((IMG_SIZE, IMG_SIZE))
+    img_array = np.array(img_resized).astype(np.float32) / 255.0
+    tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0)  # HWC -> CHW, add batch dim
+
     with torch.no_grad():
-        for images, labels in val_loader:
-            images = images.to(device)
-            labels = labels.float().unsqueeze(1).to(device)
-            outputs = model(images)
-            predicted = (outputs >= 0.5).float()
-            val_correct += (predicted == labels).sum().item()
-            val_total += labels.size(0)
+        val = model(tensor).item()
 
-    print(f"Epoch {epoch+1}/{EPOCHS} - loss: {running_loss/total:.4f} - "
-          f"train_acc: {train_acc:.4f} - val_acc: {val_correct/val_total:.4f}")
-
-# ---------- 5. Save ----------
-torch.save(model.state_dict(), 'dog_cat_model.pt')
-
-size_mb = os.path.getsize('dog_cat_model.pt') / 1e6
-print(f"Saved model size: {size_mb:.2f} MB")
+    # class_to_idx from training: 0=cat, 1=dog — confirm this matches the printout
+    # from train_colab.py's "Classes:" line before trusting this label order
+    if val >= 0.5:
+        st.success(f"Prediction: Dog 🐶 (confidence {val:.2%})")
+    else:
+        st.success(f"Prediction: Cat 🐱 (confidence {1-val:.2%})")
