@@ -1,70 +1,43 @@
-import os
-import streamlit as st
+# ============================================================
+# 13. CONVERT TRAINED MODEL FOR STREAMLIT DEPLOYMENT (Python 3.14)
+# ============================================================
+# Everything above this line is exactly your original code, unchanged.
+# This section only runs AFTER training finishes — it doesn't touch how
+# the model is built or trained.
+#
+# Why this is needed: your deployed Streamlit app runs on Python 3.14,
+# and TensorFlow has no build for 3.14, so the app can't load a .keras
+# file directly. PyTorch does support 3.14, so this converts your
+# trained model's weights into a PyTorch-loadable file — same
+# architecture, same trained weights, just a different file format.
+#
+# Weights are saved as float16 instead of float32 to stay under 25MB —
+# your Dense(512) layer alone has ~8.67M parameters (~35MB in float32).
+# float16 halves that to ~17.4MB.
+ 
 import torch
-import torch.nn as nn
-from torchvision import models, transforms
-from PIL import Image
-
-st.title("Dog vs Cat Classifier")
-
-IMG_SIZE = 200
-
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(APP_DIR, "dog_cat_model.pt")
-
-
-def build_model():
-    """Must stay identical to train_colab.py's architecture, or load_state_dict() will fail."""
-    backbone = models.mobilenet_v2(weights=None)  # weights=None: loading our own trained weights, not ImageNet's
-    backbone.classifier = nn.Sequential(
-        nn.Dropout(0.3),
-        nn.Linear(backbone.last_channel, 64), nn.ReLU(),
-        nn.Linear(64, 1), nn.Sigmoid(),
-    )
-    return backbone
-
-
-@st.cache_resource
-def load_model():
-    if not os.path.exists(MODEL_PATH):
-        available = os.listdir(APP_DIR)
-        st.error(
-            f"Model file not found at:\n`{MODEL_PATH}`\n\n"
-            f"Files actually present in the app directory:\n{available}\n\n"
-            "Check that dog_cat_model.pt is committed to the repo root, "
-            "not ignored by .gitignore, and under GitHub's file size limits."
-        )
-        st.stop()
-
-    model = build_model()
-    model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
-    model.eval()
-    return model
-
-
-model = load_model()
-
-# Must match train_colab.py's val_transform exactly, including Normalize —
-# pretrained models expect ImageNet-style normalized input, not just 0-1 scaled pixels.
-preprocess = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-
-if uploaded_file is not None:
-    img = Image.open(uploaded_file).convert("RGB")
-    st.image(img, caption="Uploaded image", use_container_width=True)
-
-    tensor = preprocess(img).unsqueeze(0)
-
-    with torch.no_grad():
-        val = model(tensor).item()
-
-    # class_to_idx from training: 0=cat, 1=dog
-    if val >= 0.5:
-        st.success(f"Prediction: Dog 🐶 (confidence {val:.2%})")
-    else:
-        st.success(f"Prediction: Cat 🐱 (confidence {1-val:.2%})")
+import os
+ 
+conv_layers = [l for l in model.layers if 'conv2d' in l.name]
+dense_layers = [l for l in model.layers if 'dense' in l.name]
+ 
+state_dict = {}
+ 
+for i, layer in enumerate(conv_layers, start=1):
+    w, b = layer.get_weights()
+    w_t = np.transpose(w, (3, 2, 0, 1))  # Keras (kh,kw,in,out) -> PyTorch (out,in,kh,kw)
+    state_dict[f'conv{i}.weight'] = torch.tensor(w_t).half()
+    state_dict[f'conv{i}.bias'] = torch.tensor(b).half()
+ 
+for i, layer in enumerate(dense_layers, start=1):
+    w, b = layer.get_weights()
+    w_t = np.transpose(w, (1, 0))  # Keras (in,out) -> PyTorch (out,in)
+    state_dict[f'fc{i}.weight'] = torch.tensor(w_t).half()
+    state_dict[f'fc{i}.bias'] = torch.tensor(b).half()
+ 
+torch.save(state_dict, 'dog_cat_model.pt')
+ 
+size_mb = os.path.getsize('dog_cat_model.pt') / 1e6
+print(f"Saved dog_cat_model.pt: {size_mb:.2f} MB")
+print("Download this file (left sidebar -> Files -> right-click -> Download) "
+      "and push it to your GitHub repo root.")
