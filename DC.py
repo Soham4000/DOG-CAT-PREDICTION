@@ -1,19 +1,30 @@
-dir_path='/content/DOGCAT/testing'
+import streamlit as st
+import numpy as np
+from PIL import Image
+import tensorflow as tf
 
-for i in os.listdir(dir_path):
-  img=image.load_img(dir_path+'//'+i,target_size=(200,200))
+st.title("Dog vs Cat Classifier")
 
-  if img is None:
-    print("Error: Could not read the image file.")
-  else:
-    img_array = np.array(img)
-    test_img = cv2.resize(img_array,(200,200))
-    test_input = test_img.reshape((1,200,200,3))
-    plt.imshow(test_img)
-    plt.show()
+@st.cache_resource
+def load_model():
+    return tf.keras.models.load_model("dog_cat_model.keras")
 
-    val=model.predict(test_input)
-    if val == 1:
-      print("dog")
+model = load_model()
+
+uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    img = Image.open(uploaded_file).convert("RGB")
+    st.image(img, caption="Uploaded image", use_column_width=True)
+
+    img_resized = img.resize((200, 200))
+    img_array = np.array(img_resized)
+    test_input = img_array.reshape((1, 200, 200, 3)) / 255.0  # match your training preprocessing
+
+    val = model.predict(test_input)
+
+    # val is a probability array, e.g. [[0.87]] — not a plain 0/1, so compare against a threshold
+    if val[0][0] >= 0.5:
+        st.success("Prediction: Dog 🐶")
     else:
-      print("cat")
+        st.success("Prediction: Cat 🐱")
