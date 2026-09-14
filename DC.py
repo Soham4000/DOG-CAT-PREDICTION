@@ -2,7 +2,7 @@ import os
 import streamlit as st
 import torch
 import torch.nn as nn
-import numpy as np
+from torchvision import models, transforms
 from PIL import Image
 
 st.title("Dog vs Cat Classifier")
@@ -13,27 +13,15 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(APP_DIR, "dog_cat_model.pt")
 
 
-class DogCatCNN(nn.Module):
-    """Must stay byte-for-byte identical to the architecture in train_colab.py,
-    or load_state_dict() will fail with a shape-mismatch error."""
-    def __init__(self):
-        super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 16, 3), nn.ReLU(), nn.MaxPool2d(2, 2),
-            nn.Conv2d(16, 32, 3), nn.ReLU(), nn.MaxPool2d(2, 2),
-            nn.Conv2d(32, 32, 3), nn.ReLU(), nn.MaxPool2d(2, 2),
-        )
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(32, 512), nn.ReLU(),
-            nn.Linear(512, 1), nn.Sigmoid(),
-        )
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.pool(x)
-        return self.classifier(x)
+def build_model():
+    """Must stay identical to train_colab.py's architecture, or load_state_dict() will fail."""
+    backbone = models.mobilenet_v2(weights=None)  # weights=None: loading our own trained weights, not ImageNet's
+    backbone.classifier = nn.Sequential(
+        nn.Dropout(0.3),
+        nn.Linear(backbone.last_channel, 64), nn.ReLU(),
+        nn.Linear(64, 1), nn.Sigmoid(),
+    )
+    return backbone
 
 
 @st.cache_resource
@@ -48,7 +36,7 @@ def load_model():
         )
         st.stop()
 
-    model = DogCatCNN()
+    model = build_model()
     model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
     model.eval()
     return model
@@ -56,15 +44,21 @@ def load_model():
 
 model = load_model()
 
+# Must match train_colab.py's val_transform exactly, including Normalize —
+# pretrained models expect ImageNet-style normalized input, not just 0-1 scaled pixels.
+preprocess = transforms.Compose([
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+
 uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     img = Image.open(uploaded_file).convert("RGB")
     st.image(img, caption="Uploaded image", use_container_width=True)
 
-    img_resized = img.resize((IMG_SIZE, IMG_SIZE))
-    img_array = np.array(img_resized).astype(np.float32) / 255.0
-    tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0)
+    tensor = preprocess(img).unsqueeze(0)
 
     with torch.no_grad():
         val = model(tensor).item()
