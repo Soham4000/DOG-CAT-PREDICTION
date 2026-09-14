@@ -65,7 +65,7 @@ uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     img = Image.open(uploaded_file).convert("RGB")
-    st.image(img, caption="Uploaded image", use_column_width=True)
+    st.image(img, caption="Uploaded image", use_container_width=True)
 
     img_resized = img.resize((IMG_SIZE, IMG_SIZE))
     img_array = np.array(img_resized).astype(np.float32) / 255.0
