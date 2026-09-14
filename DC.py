@@ -1,43 +1,86 @@
-# ============================================================
-# 13. CONVERT TRAINED MODEL FOR STREAMLIT DEPLOYMENT (Python 3.14)
-# ============================================================
-# Everything above this line is exactly your original code, unchanged.
-# This section only runs AFTER training finishes — it doesn't touch how
-# the model is built or trained.
-#
-# Why this is needed: your deployed Streamlit app runs on Python 3.14,
-# and TensorFlow has no build for 3.14, so the app can't load a .keras
-# file directly. PyTorch does support 3.14, so this converts your
-# trained model's weights into a PyTorch-loadable file — same
-# architecture, same trained weights, just a different file format.
-#
-# Weights are saved as float16 instead of float32 to stay under 25MB —
-# your Dense(512) layer alone has ~8.67M parameters (~35MB in float32).
-# float16 halves that to ~17.4MB.
- 
-import torch
 import os
- 
-conv_layers = [l for l in model.layers if 'conv2d' in l.name]
-dense_layers = [l for l in model.layers if 'dense' in l.name]
- 
-state_dict = {}
- 
-for i, layer in enumerate(conv_layers, start=1):
-    w, b = layer.get_weights()
-    w_t = np.transpose(w, (3, 2, 0, 1))  # Keras (kh,kw,in,out) -> PyTorch (out,in,kh,kw)
-    state_dict[f'conv{i}.weight'] = torch.tensor(w_t).half()
-    state_dict[f'conv{i}.bias'] = torch.tensor(b).half()
- 
-for i, layer in enumerate(dense_layers, start=1):
-    w, b = layer.get_weights()
-    w_t = np.transpose(w, (1, 0))  # Keras (in,out) -> PyTorch (out,in)
-    state_dict[f'fc{i}.weight'] = torch.tensor(w_t).half()
-    state_dict[f'fc{i}.bias'] = torch.tensor(b).half()
- 
-torch.save(state_dict, 'dog_cat_model.pt')
- 
-size_mb = os.path.getsize('dog_cat_model.pt') / 1e6
-print(f"Saved dog_cat_model.pt: {size_mb:.2f} MB")
-print("Download this file (left sidebar -> Files -> right-click -> Download) "
-      "and push it to your GitHub repo root.")
+import streamlit as st
+import torch
+import torch.nn as nn
+import numpy as np
+from PIL import Image
+
+st.title("Dog vs Cat Classifier")
+
+IMG_SIZE = 200
+
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(APP_DIR, "dog_cat_model.pt")
+
+
+class DogCatCNN(nn.Module):
+    """Mirrors your exact Keras architecture: Conv(16)->Pool->Conv(32)->Pool->
+    Conv(32)->Pool->Flatten->Dense(512)->Dense(1). Weights are transplanted
+    directly from your trained Keras model, not retrained."""
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 16, 3)
+        self.conv2 = nn.Conv2d(16, 32, 3)
+        self.conv3 = nn.Conv2d(32, 32, 3)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.relu = nn.ReLU()
+        self.fc1 = nn.Linear(23 * 23 * 32, 512)  # 200x200 input -> 23x23x32 after 3 conv+pool blocks
+        self.fc2 = nn.Linear(512, 1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        x = self.pool(self.relu(self.conv1(x)))
+        x = self.pool(self.relu(self.conv2(x)))
+        x = self.pool(self.relu(self.conv3(x)))
+        # Keras Flatten() on a (H,W,C) tensor orders features as H,W,C (C fastest).
+        # PyTorch conv output is (N,C,H,W), so without this permute, a plain
+        # flatten would order features as C,H,W instead — scrambling which
+        # input each Dense(512) weight was trained to look at. This permute
+        # restores the (H,W,C) order the weights actually expect.
+        x = x.permute(0, 2, 3, 1).contiguous()
+        x = x.flatten(1)
+        x = self.relu(self.fc1(x))
+        x = self.sigmoid(self.fc2(x))
+        return x
+
+
+@st.cache_resource
+def load_model():
+    if not os.path.exists(MODEL_PATH):
+        available = os.listdir(APP_DIR)
+        st.error(
+            f"Model file not found at:\n`{MODEL_PATH}`\n\n"
+            f"Files actually present in the app directory:\n{available}\n\n"
+            "Check that dog_cat_model.pt is committed to the repo root, "
+            "not ignored by .gitignore, and under GitHub's file size limits."
+        )
+        st.stop()
+
+    model = DogCatCNN()
+    state_dict = torch.load(MODEL_PATH, map_location="cpu")
+    state_dict = {k: v.float() for k, v in state_dict.items()}  # stored as float16, upcast for computation
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
+
+
+model = load_model()
+
+uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    img = Image.open(uploaded_file).convert("RGB")
+    st.image(img, caption="Uploaded image", use_container_width=True)
+
+    img_resized = img.resize((IMG_SIZE, IMG_SIZE))
+    img_array = np.array(img_resized).astype(np.float32) / 255.0  # matches your rescale=1/255
+    tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0)  # HWC -> CHW, add batch dim
+
+    with torch.no_grad():
+        val = model(tensor).item()
+
+    # class_indices from training: 0=cat, 1=dog (check your printed Class indices to confirm)
+    if val >= 0.5:
+        st.success(f"Prediction: Dog 🐶 (confidence {val:.2%})")
+    else:
+        st.success(f"Prediction: Cat 🐱 (confidence {1-val:.2%})")
