@@ -9,9 +9,6 @@ st.title("Dog vs Cat Classifier")
 
 IMG_SIZE = 200
 
-# Resolve the model path relative to this script's own location, not whatever
-# directory Streamlit happens to be running from — this is a common cause of
-# FileNotFoundError even when the file is correctly in the repo.
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(APP_DIR, "dog_cat_model.pt")
 
@@ -42,8 +39,6 @@ class DogCatCNN(nn.Module):
 @st.cache_resource
 def load_model():
     if not os.path.exists(MODEL_PATH):
-        # List what's actually in the app directory so the real problem is visible
-        # in the Streamlit UI instead of buried in the server logs.
         available = os.listdir(APP_DIR)
         st.error(
             f"Model file not found at:\n`{MODEL_PATH}`\n\n"
@@ -69,13 +64,12 @@ if uploaded_file is not None:
 
     img_resized = img.resize((IMG_SIZE, IMG_SIZE))
     img_array = np.array(img_resized).astype(np.float32) / 255.0
-    tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0)  # HWC -> CHW, add batch dim
+    tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0)
 
     with torch.no_grad():
         val = model(tensor).item()
 
-    # class_to_idx from training: 0=cat, 1=dog — confirm this matches the printout
-    # from train_colab.py's "Classes:" line before trusting this label order
+    # class_to_idx from training: 0=cat, 1=dog
     if val >= 0.5:
         st.success(f"Prediction: Dog 🐶 (confidence {val:.2%})")
     else:
