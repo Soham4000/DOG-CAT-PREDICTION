@@ -59,7 +59,13 @@ def load_model():
     model = DogCatCNN()
     state_dict = torch.load(MODEL_PATH, map_location="cpu")
     state_dict = {k: v.float() for k, v in state_dict.items()}  # stored as float16, upcast for computation
-    model.load_state_dict(state_dict)
+
+    try:
+        model.load_state_dict(state_dict)
+    except RuntimeError as e:
+        st.error(f"Model architecture doesn't match the saved weights:\n\n{e}")
+        st.stop()
+
     model.eval()
     return model
 
