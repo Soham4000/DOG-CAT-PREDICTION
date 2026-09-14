@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 import tensorflow as tf
 
-st.title("Dog vs Cat Classifier")
+st.title("Dog vs Cat Classifier") 
 
 @st.cache_resource
 def load_model():
