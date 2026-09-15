@@ -32,9 +32,6 @@ class DogCatCNN(nn.Module):
         x = self.pool(self.relu(self.conv1(x)))
         x = self.pool(self.relu(self.conv2(x)))
         x = self.pool(self.relu(self.conv3(x)))
-        # Keras Flatten() on (H,W,C) orders features as H,W,C (C fastest).
-        # PyTorch conv output is (N,C,H,W), so this permute restores that order
-        # before the Dense layer -- skipping it silently breaks predictions.
         x = x.permute(0, 2, 3, 1).contiguous()
         x = x.flatten(1)
         x = self.relu(self.fc1(x))
@@ -54,7 +51,7 @@ def load_model():
 
     model = DogCatCNN()
     state_dict = torch.load(MODEL_PATH, map_location="cpu", weights_only=False)
-    state_dict = {k: v.float() for k, v in state_dict.items()}  # stored as float16, upcast for computation
+    state_dict = {k: v.float() for k, v in state_dict.items()}
 
     try:
         model.load_state_dict(state_dict)
@@ -81,7 +78,6 @@ if uploaded_file is not None:
     with torch.no_grad():
         val = model(tensor).item()
 
-    # class_indices from training: 0=cat, 1=dog
     if val >= 0.5:
         st.success(f"Prediction: Dog 🐶 (confidence {val:.2%})")
     else:
