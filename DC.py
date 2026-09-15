@@ -65,7 +65,10 @@ def load_model():
 
 model = load_model()
 
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader(
+    "Upload an image",
+    type=["jpg", "jpeg", "png", "bmp", "gif", "tiff", "tif", "webp"]
+)
 
 if uploaded_file is not None:
     img = Image.open(uploaded_file).convert("RGB")
