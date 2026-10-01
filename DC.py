@@ -3,7 +3,7 @@ import streamlit as st
 import torch
 import torch.nn as nn
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 st.title("Dog vs Cat Classifier")
 
@@ -75,12 +75,12 @@ with tab_upload:
         type=["jpg", "jpeg", "png", "bmp", "gif", "tiff", "tif", "webp"]
     )
     if uploaded_file is not None:
-        img = Image.open(uploaded_file).convert("RGB")
+        img = ImageOps.exif_transpose(Image.open(uploaded_file)).convert("RGB")
 
 with tab_camera:
     camera_file = st.camera_input("Take a photo")
     if camera_file is not None:
-        img = Image.open(camera_file).convert("RGB")
+        img = ImageOps.exif_transpose(Image.open(camera_file)).convert("RGB")
 
 if img is not None:
     st.image(img, caption="Image", use_container_width=True)
