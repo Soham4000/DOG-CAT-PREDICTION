@@ -65,14 +65,25 @@ def load_model():
 
 model = load_model()
 
-uploaded_file = st.file_uploader(
-    "Upload an image",
-    type=["jpg", "jpeg", "png", "bmp", "gif", "tiff", "tif", "webp"]
-)
+tab_upload, tab_camera = st.tabs(["📁 Upload image", "📷 Use camera"])
 
-if uploaded_file is not None:
-    img = Image.open(uploaded_file).convert("RGB")
-    st.image(img, caption="Uploaded image", use_container_width=True)
+img = None
+
+with tab_upload:
+    uploaded_file = st.file_uploader(
+        "Upload an image",
+        type=["jpg", "jpeg", "png", "bmp", "gif", "tiff", "tif", "webp"]
+    )
+    if uploaded_file is not None:
+        img = Image.open(uploaded_file).convert("RGB")
+
+with tab_camera:
+    camera_file = st.camera_input("Take a photo")
+    if camera_file is not None:
+        img = Image.open(camera_file).convert("RGB")
+
+if img is not None:
+    st.image(img, caption="Image", use_container_width=True)
 
     img_resized = img.resize((IMG_SIZE, IMG_SIZE))
     img_array = np.array(img_resized).astype(np.float32) / 255.0
